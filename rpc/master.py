@@ -23,6 +23,10 @@ def run_master():
     rpc.init_rpc("master", rank=0, world_size=3)
 
     model = FinalModel(config).to(config.device)
+    # if os.path.exists(f"weights/shakespeare-gpt-{config.max_iters}.pth"):
+    #     model.load_state_dict(
+    #         torch.load(f"weights/shakespeare-gpt-{config.max_iters}.pth")
+    #     )
 
     print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
 

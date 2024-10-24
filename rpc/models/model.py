@@ -15,9 +15,9 @@ class ModelConfig:
     block_size: int
     learning_rate: float
     dropout: float = 0.2
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    max_iters: int = 5000
-    eval_interval: int = 500
+    device: str = "cpu"
+    max_iters: int = 1200
+    eval_interval: int = 100
     eval_iters: int = 200
 
     @classmethod
@@ -128,26 +128,13 @@ class FinalModel(nn.Module):
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
 
-        self.blocks = nn.Sequential(
-            Block(config),
-            Block(config),
-            Block(config),
-            Block(config),
-        )
+        self.b1 = rpc.remote("worker1", Block, args=(config,))
+        self.b2 = rpc.remote("worker2", Block, args=(config,))
+        self.b3 = rpc.remote("worker1", Block, args=(config,))
+        self.b4 = rpc.remote("worker2", Block, args=(config,))
 
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
-
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -155,7 +142,11 @@ class FinalModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))
         x = tok_emb + pos_emb
 
-        x = self.blocks(x)
+        x = self.b4.rpc_sync().forward(
+            self.b3.rpc_sync().forward(
+                self.b2.rpc_sync().forward(self.b1.rpc_sync().forward(x))
+            )
+        )
 
         x = self.ln_f(x)
         logits = self.lm_head(x)
@@ -179,8 +170,3 @@ class FinalModel(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
-
-    def to(self, device):
-        super().to(device)
-        self.device = device
-        return self
